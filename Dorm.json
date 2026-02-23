@@ -1,1 +1,284 @@
-
+{
+  "name": "Dorm",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "const now = new Date();\nconst day = now.getDay(); \nconst hour = now.getHours();\n\nlet isOpen = false;\n\n// Monday 10:00 to Tuesday 12:00\nif ((day === 1 && hour >= 10) || (day === 2 && hour < 12)) {\n    isOpen = true;\n}\n\n// Wednesday 10:00 to Thursday 12:00\nif ((day === 3 && hour >= 10) || (day === 4 && hour < 12)) {\n    isOpen = true;\n}\n\n// Generate a random delay between 0 and 240 seconds (4 minutes)\nconst randomDelay = Math.floor(Math.random() * 241);\n\nreturn [{ json: { isOpen, randomDelay } }];"
+      },
+      "id": "b69d5691-6eb8-4774-8cd1-e29c94c4a95c",
+      "name": "Check STWDO Window",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2576,
+        -432
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.isOpen}}",
+              "operation": "isTrue"
+            }
+          ]
+        }
+      },
+      "id": "26f22156-2823-4ebf-bb13-630f0c5f1e73",
+      "name": "Is Window Open?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -2352,
+        -432
+      ]
+    },
+    {
+      "parameters": {
+        "amount": "={{$json.randomDelay}}",
+        "unit": "seconds"
+      },
+      "id": "7d80a40c-7c40-4b98-8f31-0d56a0b7db5c",
+      "name": "Random Delay",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [
+        -2208,
+        -432
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://www.stwdo.de/wohnen/aktuelle-wohnangebote",
+        "options": {}
+      },
+      "id": "afabc5c2-3c47-4cf7-b56a-2bf8c1d7d24f",
+      "name": "Fetch Listings",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2128,
+        -464
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "extractHtmlContent",
+        "extractionValues": {
+          "values": [
+            {
+              "key": "title",
+              "cssSelector": ".residential-offer__title",
+              "returnValue": "html"
+            },
+            {
+              "key": "price",
+              "cssSelector": ".residential-offer__price",
+              "returnValue": "html"
+            },
+            {
+              "key": "link",
+              "cssSelector": ".residential-offer__link a",
+              "returnValue": "attribute",
+              "attribute": "href"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "3ffa9111-f2c2-4413-b921-8f71f2d69589",
+      "name": "Extract Rooms",
+      "type": "n8n-nodes-base.html",
+      "typeVersion": 1.2,
+      "position": [
+        -1904,
+        -464
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.link}}",
+              "operation": "notEmpty"
+            }
+          ]
+        }
+      },
+      "id": "b9c3cd22-8c34-4a1f-9b14-245a7c4d7bf4",
+      "name": "Room Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -1680,
+        -464
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Persistent dedup across runs using n8n static data\nconst data = this.getWorkflowStaticData('global');\nif (!data.seen) data.seen = [];\n\n// Optional: keep only last 500 entries to prevent unbounded growth\nconst MAX = 500;\n\nconst out = [];\nfor (const item of items) {\n  const link = item.json.link;\n  if (!link) continue;\n\n  const key = String(link).trim();\n  if (!data.seen.includes(key)) {\n    data.seen.push(key);\n    if (data.seen.length > MAX) {\n      data.seen = data.seen.slice(data.seen.length - MAX);\n    }\n    out.push(item);\n  }\n}\n\nreturn out;"
+      },
+      "id": "6f7090af-0899-437a-adbf-6aee755e8fcd",
+      "name": "Only New Rooms",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1456,
+        -464
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_CHAT_ID",
+        "text": "🚨 New Dorm Offer Found!\n\nTitle: {{$json.title}}\nPrice: {{$json.price}}\nLink: {{$json.link}}",
+        "additionalFields": {}
+      },
+      "id": "ea2a9ea1-9c33-4c2f-9f4e-6a1d4b9b4f0a",
+      "name": "Telegram Alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [
+        -1232,
+        -544
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_CHAT_ID",
+        "text": "🔔 Dorm Listing Detected (Backup Alert)\n\n{{$json.title}}\n{{$json.link}}",
+        "additionalFields": {}
+      },
+      "id": "b9ecb30d-0ce8-40a7-8b3f-9d9d8d4a3f33",
+      "name": "Telegram Alert2",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [
+        -1232,
+        -384
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "5f74a0a3-bbb5-4c6c-a7f6-2d5e6b35a0d1",
+      "name": "Scheduler",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        -2800,
+        -432
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Check STWDO Window": {
+      "main": [
+        [
+          {
+            "node": "Is Window Open?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Window Open?": {
+      "main": [
+        [
+          {
+            "node": "Random Delay",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Random Delay": {
+      "main": [
+        [
+          {
+            "node": "Fetch Listings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Listings": {
+      "main": [
+        [
+          {
+            "node": "Extract Rooms",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Rooms": {
+      "main": [
+        [
+          {
+            "node": "Room Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Room Found?": {
+      "main": [
+        [
+          {
+            "node": "Only New Rooms",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Only New Rooms": {
+      "main": [
+        [
+          {
+            "node": "Telegram Alert",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Telegram Alert2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scheduler": {
+      "main": [
+        [
+          {
+            "node": "Check STWDO Window",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {}
+}
