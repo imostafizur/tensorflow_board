@@ -1,201 +1,167 @@
 {
-  "name": "Dorm Monitor Random Loop",
+  "name": "StwDo dorm availability -> Telegram",
   "nodes": [
     {
-      "parameters": {},
-      "id": "start",
-      "name": "Manual Start",
-      "type": "n8n-nodes-base.manualTrigger",
-      "typeVersion": 1,
-      "position": [-1200, 0]
-    },
-    {
       "parameters": {
-        "jsCode": "function berlinNowParts(date = new Date()) {\n  const parts = new Intl.DateTimeFormat('en-GB', {\n    timeZone: 'Europe/Berlin',\n    weekday: 'short',\n    hour: '2-digit',\n    minute: '2-digit',\n    hour12: false,\n  }).formatToParts(date);\n\n  const obj = {};\n  for (const p of parts) obj[p.type] = p.value;\n\n  const weekdayMap = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 0 };\n\n  return {\n    day: weekdayMap[obj.weekday],\n    hour: parseInt(obj.hour, 10),\n    minute: parseInt(obj.minute, 10),\n  };\n}\n\nconst { day, hour, minute } = berlinNowParts(new Date());\n\nlet isOpen = false;\n\nif ((day === 1 && hour >= 10) || (day === 2 && hour < 12)) isOpen = true;\nif ((day === 3 && hour >= 10) || (day === 4 && hour < 12)) isOpen = true;\n\nreturn [{ json: { isOpen } }];"
-      },
-      "id": "window",
-      "name": "Check Window (Berlin)",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [-1000, 0]
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "boolean": [
+        "triggerTimes": {
+          "item": [
             {
-              "value1": "={{$json.isOpen}}",
-              "operation": "isTrue"
+              "mode": "everyX",
+              "value": 15,
+              "unit": "minutes"
             }
           ]
         }
       },
-      "id": "ifWindow",
-      "name": "Window Open?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2,
-      "position": [-800, 0]
+      "id": "b9b5a4d3-2f2c-4b5f-9a8e-4f1a8c0a1111",
+      "name": "Cron (every 15 min)",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [
+        240,
+        260
+      ]
     },
     {
       "parameters": {
         "method": "GET",
-        "url": "https://www.stwdo.de/wohnen/aktuelle-wohnangebote"
+        "url": "https://www.stwdo.de/wohnen/aktuelle-wohnangebote",
+        "responseFormat": "string",
+        "options": {
+          "followRedirect": true,
+          "timeout": 60000
+        },
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (n8n; dorm-check)"
+            }
+          ]
+        }
       },
-      "id": "http",
-      "name": "Fetch Listings",
+      "id": "3f6e6df9-2d7c-4f0f-9c0e-9fef2a2b2222",
+      "name": "Fetch StwDo page",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
-      "position": [-600, 0]
+      "position": [
+        480,
+        260
+      ]
     },
     {
       "parameters": {
-        "jsCode": "const body = JSON.stringify($json);\nconst lower = body.toLowerCase();\n\nconst blocked = lower.includes('captcha') || lower.includes('cloudflare') || lower.includes('access denied');\n\nreturn [{ json: { blocked, html: $json.data || $json.body || '' } }];"
+        "jsCode": "const html = $json.body || '';\n\n// 1) Quick status check\nconst hasNoOffers = /Keine\\s+Angebote/i.test(html);\n\n// 2) Try to extract offer/exposé links (when offers exist)\n//    We filter for links that look like an offer/exposé page.\n//    If the site changes markup, this still often works.\nconst hrefRegex = /href\\s*=\\s*\"([^\"]+)\"/gi;\nconst found = new Set();\nlet m;\nwhile ((m = hrefRegex.exec(html)) !== null) {\n  let href = m[1];\n  // Normalize relative URLs\n  if (href.startsWith('/')) href = 'https://www.stwdo.de' + href;\n\n  // Filter: keep only URLs that look like an offer/exposé\n  // (contains 'expos' or 'angebot' and is on stwdo.de)\n  if (\n    href.includes('stwdo.de') &&\n    /expos|angebot/i.test(href) &&\n    !/aktuelle-wohnangebote/i.test(href)\n  ) {\n    found.add(href);\n  }\n}\n\nconst offers = Array.from(found).sort();\n\n// 3) Use workflow static data to remember previous offers\nconst data = this.getWorkflowStaticData('global');\nconst prevOffers = Array.isArray(data.prevOffers) ? data.prevOffers : [];\n\n// If no offers section exists but page is NOT \"Keine Angebote\",\n// we still want to notify you to manually check.\nconst pageShowsOffers = !hasNoOffers;\n\nconst newOffers = offers.filter(u => !prevOffers.includes(u));\n\nlet notify = false;\nlet message = '';\n\nif (pageShowsOffers) {\n  if (offers.length > 0) {\n    // Offers detected with URLs\n    if (newOffers.length > 0 || prevOffers.length === 0) {\n      notify = true;\n      message = `🏠 *StwDo dorm offers detected!*\\n\\nNew offers (${newOffers.length}):\\n- ${newOffers.join('\\n- ')}\\n\\nAll extracted offers (${offers.length}):\\n- ${offers.join('\\n- ')}\\n\\nMain page: https://www.stwdo.de/wohnen/aktuelle-wohnangebote`;\n    }\n  } else {\n    // Offers likely exist but we couldn't confidently extract URLs\n    // Notify once per state-change\n    const prevFlag = !!data.prevFlagOffersLikely;\n    if (!prevFlag) {\n      notify = true;\n      message = `🏠 *StwDo page no longer says “Keine Angebote”*\\n\\nI couldn't extract offer links reliably (site markup may have changed), but it looks like offers may be available.\\n\\nPlease check: https://www.stwdo.de/wohnen/aktuelle-wohnangebote`;\n    }\n    data.prevFlagOffersLikely = true;\n  }\n} else {\n  // No offers\n  data.prevFlagOffersLikely = false;\n}\n\n// 4) Update stored offers only when we extracted something\nif (offers.length > 0) {\n  data.prevOffers = offers;\n}\n\nreturn [{\n  json: {\n    hasNoOffers,\n    pageShowsOffers,\n    offersCount: offers.length,\n    newOffersCount: newOffers.length,\n    newOffers,\n    offers,\n    notify,\n    message\n  }\n}];\n"
       },
-      "id": "checkBlock",
-      "name": "Check Blocked",
+      "id": "0c1c9b7a-7f8a-4e2e-9a1a-1e1d3c3c3333",
+      "name": "Detect new offers",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [-400, 0]
+      "position": [
+        740,
+        260
+      ]
     },
     {
       "parameters": {
         "conditions": {
           "boolean": [
             {
-              "value1": "={{$json.blocked}}",
-              "operation": "isTrue"
+              "value1": "={{$json.notify}}",
+              "value2": true
             }
           ]
         }
       },
-      "id": "ifBlocked",
-      "name": "Blocked?",
+      "id": "b8a6c4d1-5c2e-4d71-9b22-2b2b4d4d4444",
+      "name": "IF notify?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [-200, 0]
+      "position": [
+        980,
+        260
+      ]
     },
     {
       "parameters": {
-        "chatId": "YOUR_CHAT_ID",
-        "text": "⚠️ Dorm Monitor Blocked / Captcha Detected"
-      },
-      "id": "alertBlocked",
-      "name": "Telegram Block Alert",
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1,
-      "position": [0, -100]
-    },
-    {
-      "parameters": {
-        "operation": "extractHtmlContent",
-        "extractionValues": {
-          "values": [
-            {
-              "key": "title",
-              "cssSelector": ".residential-offer__title",
-              "returnValue": "html"
-            },
-            {
-              "key": "link",
-              "cssSelector": ".residential-offer__link a",
-              "returnValue": "attribute",
-              "attribute": "href"
-            }
-          ]
+        "operation": "sendMessage",
+        "chatId": "YOUR_CHAT_ID_HERE",
+        "text": "={{$json.message}}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
         }
       },
-      "id": "extract",
-      "name": "Extract Rooms",
-      "type": "n8n-nodes-base.html",
-      "typeVersion": 1,
-      "position": [0, 100]
-    },
-    {
-      "parameters": {
-        "jsCode": "const data = this.getWorkflowStaticData('global');\nif (!data.seen) data.seen = [];\n\nconst out = [];\nfor (const item of items) {\n  const link = item.json.link;\n  if (!link) continue;\n  if (!data.seen.includes(link)) {\n    data.seen.push(link);\n    out.push(item);\n  }\n}\nreturn out;"
-      },
-      "id": "dedup",
-      "name": "Only New Rooms",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [200, 100]
-    },
-    {
-      "parameters": {
-        "chatId": "YOUR_CHAT_ID",
-        "text": "🚨 New Dorm Offer!\n\n{{$json.title}}\n{{$json.link}}"
-      },
-      "id": "alert",
-      "name": "Telegram Alert",
+      "id": "9d2a7f7b-8d4f-4c34-9e14-5e5e6f6f5555",
+      "name": "Telegram notify",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1,
-      "position": [400, 100]
-    },
-    {
-      "parameters": {
-        "jsCode": "const randomSeconds = Math.floor(Math.random() * (300 - 60 + 1)) + 60;\nreturn [{ json: { randomSeconds } }];"
-      },
-      "id": "random",
-      "name": "Random 1-5 Min",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [600, 0]
-    },
-    {
-      "parameters": {
-        "amount": "={{$json.randomSeconds}}",
-        "unit": "seconds"
-      },
-      "id": "wait",
-      "name": "Wait",
-      "type": "n8n-nodes-base.wait",
-      "typeVersion": 1,
-      "position": [800, 0]
+      "position": [
+        1220,
+        220
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "YOUR_TELEGRAM_CREDENTIAL_ID",
+          "name": "YOUR_TELEGRAM_CREDENTIAL_NAME"
+        }
+      }
     }
   ],
+  "pinData": {},
   "connections": {
-    "Manual Start": {
-      "main": [[{ "node": "Check Window (Berlin)", "type": "main", "index": 0 }]]
-    },
-    "Check Window (Berlin)": {
-      "main": [[{ "node": "Window Open?", "type": "main", "index": 0 }]]
-    },
-    "Window Open?": {
+    "Cron (every 15 min)": {
       "main": [
-        [{ "node": "Fetch Listings", "type": "main", "index": 0 }],
-        [{ "node": "Random 1-5 Min", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Fetch StwDo page",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
-    "Fetch Listings": {
-      "main": [[{ "node": "Check Blocked", "type": "main", "index": 0 }]]
-    },
-    "Check Blocked": {
-      "main": [[{ "node": "Blocked?", "type": "main", "index": 0 }]]
-    },
-    "Blocked?": {
+    "Fetch StwDo page": {
       "main": [
-        [{ "node": "Extract Rooms", "type": "main", "index": 0 }],
-        [{ "node": "Telegram Block Alert", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Detect new offers",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
-    "Extract Rooms": {
-      "main": [[{ "node": "Only New Rooms", "type": "main", "index": 0 }]]
+    "Detect new offers": {
+      "main": [
+        [
+          {
+            "node": "IF notify?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
-    "Only New Rooms": {
-      "main": [[{ "node": "Telegram Alert", "type": "main", "index": 0 }]]
-    },
-    "Telegram Alert": {
-      "main": [[{ "node": "Random 1-5 Min", "type": "main", "index": 0 }]]
-    },
-    "Telegram Block Alert": {
-      "main": [[{ "node": "Random 1-5 Min", "type": "main", "index": 0 }]]
-    },
-    "Random 1-5 Min": {
-      "main": [[{ "node": "Wait", "type": "main", "index": 0 }]]
-    },
-    "Wait": {
-      "main": [[{ "node": "Check Window (Berlin)", "type": "main", "index": 0 }]]
+    "IF notify?": {
+      "main": [
+        [
+          {
+            "node": "Telegram notify",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
     }
   },
-  "active": false
+  "active": false,
+  "settings": {
+    "executionTimeout": 3600,
+    "timezone": "Europe/Berlin"
+  },
+  "versionId": "00000000-0000-0000-0000-000000000000",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
 }
