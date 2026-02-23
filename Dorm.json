@@ -1,187 +1,255 @@
 {
+  "name": "STWDO Dorm Alert → Telegram",
   "nodes": [
     {
       "parameters": {
-        "rule": {
-          "interval": [
+        "triggerTimes": {
+          "item": [
             {
-              "field": "minutes",
-              "interval": 10
+              "mode": "everyX",
+              "value": 5,
+              "unit": "minutes"
             }
           ]
         }
       },
-      "id": "76db164a-9774-4bca-88bc-b369c0258763",
-      "name": "Schedule Trigger",
-      "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1.1,
-      "position": [
-        460,
-        460
-      ]
-    },
-    {
-      "parameters": {
-        "url": "https://www.stwdo.de/wohnen/aktuelle-wohnangebote",
-        "options": {}
-      },
-      "id": "e81d830b-9685-4849-808b-030f8069635b",
-      "name": "Fetch Website",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.1,
-      "position": [
-        680,
-        460
-      ]
-    },
-    {
-      "parameters": {
-        "extractionValues": {
-          "values": [
-            {
-              "class": ".v-card",
-              "key": "offers",
-              "multiple": true,
-              "returnValue": "html"
-            }
-          ]
-        },
-        "options": {}
-      },
-      "id": "18f9c792-710e-4361-9659-1e35574510b9",
-      "name": "Extract Offers",
-      "type": "n8n-nodes-base.html",
+      "id": "6f2c7e72-9a3e-4b5c-8f1f-9b9c9a41c2d7",
+      "name": "Cron (every 5 min)",
+      "type": "n8n-nodes-base.cron",
       "typeVersion": 1,
       "position": [
-        900,
-        460
+        240,
+        300
       ]
     },
     {
       "parameters": {
-        "chatId": "1520384878",
-        "text": "=🏠 New Dorm Offer Found!\n\nCheck here: https://www.stwdo.de/wohnen/aktuelle-wohnangebote",
-        "additionalFields": {}
-      },
-      "id": "4e74034b-88e2-4160-a7d5-0f6696b05597",
-      "name": "Telegram Bot 1",
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.1,
-      "position": [
-        1340,
-        360
-      ],
-      "credentials": {
-        "telegramApi": {
-          "id": "bot1_temp_id",
-          "provider": "temp"
+        "method": "GET",
+        "url": "https://www.stwdo.de/wohnen/aktuelle-wohnangebote",
+        "responseFormat": "string",
+        "options": {
+          "timeout": 30000,
+          "followRedirect": true
+        },
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (n8n; STWDO dorm checker)"
+            },
+            {
+              "name": "Accept-Language",
+              "value": "de-DE,de;q=0.9,en;q=0.8"
+            }
+          ]
         }
-      }
+      },
+      "id": "c1ef40c7-0dbf-4b08-8aa2-2e6e7c879f55",
+      "name": "Fetch STWDO page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        460,
+        300
+      ]
     },
     {
       "parameters": {
-        "chatId": "6231942759",
-        "text": "=🏠 New Dorm Offer Found!\n\nCheck here: https://www.stwdo.de/wohnen/aktuelle-wohnangebote",
-        "additionalFields": {}
+        "jsCode": "const html = $json.body || '';\n\n// If the site explicitly says \"Keine Angebote\", short-circuit quickly.\nconst noOffers = /Keine\\s+Angebote/i.test(html);\n\n// Offer pages are typically linked under the same path with an extra segment.\n// We extract ONLY links like /wohnen/aktuelle-wohnangebote/<something>\n// and ignore the base listing URL.\nconst base = 'https://www.stwdo.de';\n\nconst linkRegex = /href\\s*=\\s*\"(\\/wohnen\\/aktuelle-wohnangebote\\/[^\"]+)\"/gi;\nconst links = new Set();\nlet m;\nwhile ((m = linkRegex.exec(html)) !== null) {\n  const path = m[1];\n  // Guard: ignore any accidental repeats of the listing URL\n  if (path === '/wohnen/aktuelle-wohnangebote') continue;\n  // Some sites include anchors with trailing quotes or query params; keep full path\n  links.add(base + path);\n}\n\n// Attempt to also extract a title near each link (best-effort).\n// We'll do a simple approach: find the <a ...href=\"...\">TEXT</a>\nconst offers = [];\nfor (const url of links) {\n  const path = url.replace(base, '');\n  const aTag = new RegExp(`<a[^>]*href=\\\\\"${path.replace(/[.*+?^${}()|[\\\\]\\\\]/g, '\\\\$&')}\\\\\"[^>]*>([\\\\s\\\\S]*?)<\\\\/a>`, 'i');\n  const aMatch = html.match(aTag);\n  let title = '';\n  if (aMatch && aMatch[1]) {\n    title = aMatch[1]\n      .replace(/<[^>]+>/g, ' ')\n      .replace(/\\s+/g, ' ')\n      .trim();\n  }\n  offers.push({ url, title: title || 'STWDO Wohnangebot' });\n}\n\nreturn [\n  {\n    json: {\n      noOffers,\n      count: offers.length,\n      offers\n    }\n  }\n];"
       },
-      "id": "e963813c-5353-4811-9491-d890066b1762",
-      "name": "Telegram Bot 2",
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.1,
+      "id": "c8f8c53b-32b7-46d2-a92a-4b3a9f3cd5b1",
+      "name": "Parse offers",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
-        1340,
-        560
-      ],
-      "credentials": {
-        "telegramApi": {
-          "id": "bot2_temp_id",
-          "provider": "temp"
-        }
-      }
+        690,
+        300
+      ]
     },
     {
       "parameters": {
         "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict"
-          },
-          "conditions": [
+          "number": [
             {
-              "id": "76628794-c71b-465a-8b83-b09e3776953f",
-              "leftValue": "={{ $json.offers }}",
-              "rightValue": "",
-              "operator": {
-                "type": "string",
-                "operation": "notEmpty",
-                "singleValue": true
-              }
+              "value1": "={{$json.count}}",
+              "operation": "larger",
+              "value2": 0
             }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
+          ]
+        }
       },
-      "id": "97e64177-3e1d-4034-8b65-03730761e06e",
-      "name": "Is there an offer?",
+      "id": "2c3d88c4-85c1-4e2f-8c8b-7d8d2e15e0bd",
+      "name": "Any offers?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        1120,
-        460
+        920,
+        300
       ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = getWorkflowStaticData('global');\n\n// Keep a set of seen URLs\nif (!data.seenUrls) data.seenUrls = {};\n\nconst offers = $json.offers || [];\nconst newOnes = [];\n\nfor (const o of offers) {\n  if (!o || !o.url) continue;\n  if (!data.seenUrls[o.url]) {\n    newOnes.push(o);\n    data.seenUrls[o.url] = new Date().toISOString();\n  }\n}\n\n// Optional: prevent unbounded growth (keep last ~500 URLs)\nconst keys = Object.keys(data.seenUrls);\nif (keys.length > 500) {\n  // delete oldest entries\n  const sorted = keys\n    .map(k => ({ k, t: data.seenUrls[k] }))\n    .sort((a,b) => (a.t < b.t ? -1 : 1));\n  const toDelete = sorted.slice(0, keys.length - 500);\n  for (const item of toDelete) delete data.seenUrls[item.k];\n}\n\nreturn [\n  {\n    json: {\n      newCount: newOnes.length,\n      newOffers: newOnes\n    }\n  }\n];"
+      },
+      "id": "7d7b2d5d-4f47-4e2a-8b68-9f4c4b7bbf08",
+      "name": "Filter only NEW offers",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1160,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{$json.newCount}}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "id": "edb1fbcb-2e47-4b4a-b8a0-27c2b4adbfde",
+      "name": "Any NEW offers?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1390,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "sendMessage",
+        "chatId": "PUT_CHAT_ID_FOR_TELEGRAM_1_HERE",
+        "text": "={{'🏠 NEW STWDO public dorm offer(s): ' + $json.newCount + \"\\n\\n\" + ($json.newOffers || []).map((o, i) => `${i+1}) ${o.title}\\n${o.url}`).join(\"\\n\\n\") + \"\\n\\nListing: https://www.stwdo.de/wohnen/aktuelle-wohnangebote\"}}",
+        "additionalFields": {
+          "disableNotification": false
+        }
+      },
+      "id": "fbc3c8b1-40f4-4d4a-9e51-4c0b693ec3d4",
+      "name": "Telegram 1 - Notify",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [
+        1620,
+        140
+      ],
+      "credentials": {
+        "telegramApi": {
+          "name": "Telegram Bot 1 Credentials (set in n8n)",
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "sendMessage",
+        "chatId": "PUT_CHAT_ID_FOR_TELEGRAM_2_HERE",
+        "text": "={{'🏠 NEW STWDO public dorm offer(s): ' + $json.newCount + \"\\n\\n\" + ($json.newOffers || []).map((o, i) => `${i+1}) ${o.title}\\n${o.url}`).join(\"\\n\\n\") + \"\\n\\nListing: https://www.stwdo.de/wohnen/aktuelle-wohnangebote\"}}",
+        "additionalFields": {
+          "disableNotification": false
+        }
+      },
+      "id": "9bb8d1b1-1b6f-4c7e-9a6c-fef11a8af31c",
+      "name": "Telegram 2 - Notify",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [
+        1620,
+        300
+      ],
+      "credentials": {
+        "telegramApi": {
+          "name": "Telegram Bot 2 Credentials (set in n8n)",
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID"
+        }
+      }
     }
   ],
   "connections": {
-    "Schedule Trigger": {
+    "Cron (every 5 min)": {
       "main": [
         [
           {
-            "node": "Fetch Website",
+            "node": "Fetch STWDO page",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Fetch Website": {
+    "Fetch STWDO page": {
       "main": [
         [
           {
-            "node": "Extract Offers",
+            "node": "Parse offers",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Extract Offers": {
+    "Parse offers": {
       "main": [
         [
           {
-            "node": "Is there an offer?",
+            "node": "Any offers?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Is there an offer?": {
+    "Any offers?": {
       "main": [
         [
           {
-            "node": "Telegram Bot 1",
+            "node": "Filter only NEW offers",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Filter only NEW offers": {
+      "main": [
+        [
+          {
+            "node": "Any NEW offers?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any NEW offers?": {
+      "main": [
+        [
+          {
+            "node": "Telegram 1 - Notify",
             "type": "main",
             "index": 0
           },
           {
-            "node": "Telegram Bot 2",
+            "node": "Telegram 2 - Notify",
             "type": "main",
             "index": 0
           }
-        ]
+        ],
+        []
       ]
     }
-  }
+  },
+  "active": false,
+  "settings": {
+    "executionTimeout": 120,
+    "saveExecutionProgress": true,
+    "saveManualExecutions": true
+  },
+  "versionId": "1"
 }
