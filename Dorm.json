@@ -93,6 +93,37 @@
     },
     {
       "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c1a2b3",
+              "leftValue": "={{ $json.price }}",
+              "rightValue": "€",
+              "operator": {
+                "type": "string",
+                "operation": "contains",
+                "name": "filter",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "9",
+      "name": "Is Real Offer?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1200, 0]
+    },
+    {
+      "parameters": {
         "chatId": "1520384878",
         "text": "=New Dorm Available!\nTitle: {{ $json.title }}\nPrice: {{ $json.price }}\nLink: https://www.stwdo.de{{ $json.link }}",
         "additionalFields": {}
@@ -101,7 +132,7 @@
       "name": "Telegram Alert 1",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.1,
-      "position": [1200, -100],
+      "position": [1400, -100],
       "credentials": {
         "telegramApi": {
           "id": "",
@@ -119,7 +150,7 @@
       "name": "Telegram Alert 2",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.1,
-      "position": [1200, 100],
+      "position": [1400, 100],
       "credentials": {
         "telegramApi": {
           "id": "",
@@ -185,6 +216,17 @@
       ]
     },
     "Only New Rooms": {
+      "main": [
+        [
+          {
+            "node": "Is Real Offer?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Real Offer?": {
       "main": [
         [
           {
