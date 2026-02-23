@@ -1,5 +1,5 @@
 {
-  "name": "Dorm_Bot",
+  "name": "Dorm_Bot (STWDO STRICT - Bulletproof)",
   "nodes": [
     {
       "parameters": {
@@ -20,10 +20,10 @@
     },
     {
       "parameters": {
-        "jsCode": "const day = new Date().getDay();\n// STWDO frequently publishes updates on Mondays (1) and Wednesdays (3)\nconst isPublishingDay = (day === 1 || day === 3);\n// Generate a random delay between 5 to 35 seconds to avoid rate limiting\nconst delaySeconds = Math.floor(Math.random() * 30) + 5;\nreturn [{ json: { isPublishingDay, delaySeconds } }];"
+        "jsCode": "const delaySeconds = Math.floor(Math.random() * 30) + 5;\nreturn [{ json: { delaySeconds } }];"
       },
       "id": "2",
-      "name": "Publish Window & Delay",
+      "name": "Random Delay",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [200, 0]
@@ -41,8 +41,21 @@
     },
     {
       "parameters": {
+        "method": "GET",
         "url": "https://www.stwdo.de/wohnen/aktuelle-wohnangebote",
-        "options": {}
+        "responseFormat": "string",
+        "options": {
+          "timeout": 60000,
+          "followRedirect": true
+        },
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (n8n dorm bot)"
+            }
+          ]
+        }
       },
       "id": "4",
       "name": "Fetch STWDO Listings",
@@ -52,109 +65,47 @@
     },
     {
       "parameters": {
-        "extractionValues": {
-          "values": [
-            {
-              "key": "title",
-              "cssSelector": "h2", 
-              "returnValue": "text"
-            },
-            {
-              "key": "link",
-              "cssSelector": "a", 
-              "returnValue": "attribute",
-              "attribute": "href"
-            },
-            {
-              "key": "price",
-              "cssSelector": ".price", 
-              "returnValue": "text"
-            }
-          ]
-        },
-        "options": {}
+        "jsCode": "const html = $json.body || $json.data || '';\n\n// --- 1) Convert HTML to clean text for reliable matching ---\nconst text = html\n  .replace(/<script\\b[^<]*(?:(?!<\\/script>)<[^<]*)*<\\/script>/gi, ' ')\n  .replace(/<style\\b[^<]*(?:(?!<\\/style>)<[^<]*)*<\\/style>/gi, ' ')\n  .replace(/<[^>]+>/g, ' ')\n  .replace(/&nbsp;|&#160;/gi, ' ')\n  .replace(/\\s+/g, ' ')\n  .trim()\n  .toLowerCase();\n\n// --- 2) Strong NO-OFFERS detection (what the page shows when empty) ---\n// If either phrase is present, we NEVER notify.\nconst noOffers =\n  text.includes('keine angebote') ||\n  text.includes('leider haben wir aktuell keine freien plätze') ||\n  text.includes('schade - leider haben wir aktuell keine freien plätze');\n\n// --- 3) Extract ONLY real offer detail links ---\n// STRICT allow-list: links under /wohnen/aktuelle-wohnangebote/...\nconst hrefRegex = /href\\s*=\\s*\"([^\"]+)\"/gi;\nconst found = new Set();\nlet m;\n\nwhile ((m = hrefRegex.exec(html)) !== null) {\n  let href = m[1];\n  if (href.startsWith('/')) href = 'https://www.stwdo.de' + href;\n\n  const isOfferDetail =\n    href.startsWith('https://www.stwdo.de/wohnen/aktuelle-wohnangebote/') &&\n    href !== 'https://www.stwdo.de/wohnen/aktuelle-wohnangebote/' &&\n    href !== 'https://www.stwdo.de/wohnen/aktuelle-wohnangebote';\n\n  if (isOfferDetail) found.add(href);\n}\n\nconst offers = Array.from(found).sort();\n\n// --- 4) Static memory (persists across runs) ---\nconst data = $getWorkflowStaticData('global');\nif (!Array.isArray(data.prevOffers)) data.prevOffers = [];\n\n// If page says NO offers: reset memory + output NO items (so Telegram won't run)\nif (noOffers) {\n  data.prevOffers = [];\n  return [];\n}\n\n// Page does not say NO offers.\n// Notify ONLY if we extracted real offer links and they are new.\nconst newOffers = offers.filter(u => !data.prevOffers.includes(u));\n\nif (newOffers.length === 0) {\n  // update memory anyway if offers exist (prevents repeated alerts)\n  if (offers.length > 0) data.prevOffers = offers;\n  return [];\n}\n\n// save current offers\nif (offers.length > 0) data.prevOffers = offers;\n\n// Output one item per new offer (Telegram nodes will send each)\nreturn newOffers.map((url) => ({\n  json: {\n    offerUrl: url,\n    message: `🏠 New STWDO dorm offer found!\\n\\n${url}\\n\\nMain page: https://www.stwdo.de/wohnen/aktuelle-wohnangebote`\n  }\n}));"
       },
       "id": "5",
-      "name": "Extract Rooms",
-      "type": "n8n-nodes-base.htmlExtract",
-      "typeVersion": 1,
-      "position": [800, 0]
-    },
-    {
-      "parameters": {
-        "operation": "removeDuplicates",
-        "compare": "allFields"
-      },
-      "id": "6",
-      "name": "Only New Rooms",
-      "type": "n8n-nodes-base.itemLists",
-      "typeVersion": 3,
-      "position": [1000, 0]
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": false,
-            "leftValue": "",
-            "typeValidation": "strict"
-          },
-          "conditions": [
-            {
-              "id": "c1a2b3",
-              "leftValue": "={{ $json.price }}",
-              "rightValue": "€",
-              "operator": {
-                "type": "string",
-                "operation": "contains",
-                "name": "filter",
-                "singleValue": true
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "id": "9",
-      "name": "Is Real Offer?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [1200, 0]
+      "name": "Detect New Offers (STRICT)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [820, 0]
     },
     {
       "parameters": {
         "chatId": "1520384878",
-        "text": "=New Dorm Available!\nTitle: {{ $json.title }}\nPrice: {{ $json.price }}\nLink: https://www.stwdo.de{{ $json.link }}",
+        "text": "={{$json.message}}",
         "additionalFields": {}
       },
       "id": "7",
       "name": "Telegram Alert 1",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.1,
-      "position": [1400, -100],
+      "position": [1060, -100],
       "credentials": {
         "telegramApi": {
           "id": "",
-          "name": "Telegram account"
+          "name": "Telegram Bot 1"
         }
       }
     },
     {
       "parameters": {
         "chatId": "6231942759",
-        "text": "=New Dorm Available!\nTitle: {{ $json.title }}\nPrice: {{ $json.price }}\nLink: https://www.stwdo.de{{ $json.link }}",
+        "text": "={{$json.message}}",
         "additionalFields": {}
       },
       "id": "8",
       "name": "Telegram Alert 2",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.1,
-      "position": [1400, 100],
+      "position": [1060, 100],
       "credentials": {
         "telegramApi": {
           "id": "",
-          "name": "Telegram account"
+          "name": "Telegram Bot 2"
         }
       }
     }
@@ -164,14 +115,14 @@
       "main": [
         [
           {
-            "node": "Publish Window & Delay",
+            "node": "Random Delay",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Publish Window & Delay": {
+    "Random Delay": {
       "main": [
         [
           {
@@ -197,36 +148,14 @@
       "main": [
         [
           {
-            "node": "Extract Rooms",
+            "node": "Detect New Offers (STRICT)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Extract Rooms": {
-      "main": [
-        [
-          {
-            "node": "Only New Rooms",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Only New Rooms": {
-      "main": [
-        [
-          {
-            "node": "Is Real Offer?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Is Real Offer?": {
+    "Detect New Offers (STRICT)": {
       "main": [
         [
           {
