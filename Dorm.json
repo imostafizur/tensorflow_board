@@ -1,5 +1,5 @@
 {
-  "name": "StwDo dorm availability -> Telegram (2 bots) [FIXED]",
+  "name": "StwDo dorm availability -> Telegram (2 bots) [STRICT FIX]",
   "nodes": [
     {
       "parameters": {
@@ -13,7 +13,7 @@
           ]
         }
       },
-      "id": "cron_15m_fixed",
+      "id": "cron_15m_strict",
       "name": "Cron (every 15 min)",
       "type": "n8n-nodes-base.cron",
       "typeVersion": 1,
@@ -37,7 +37,7 @@
           ]
         }
       },
-      "id": "http_fetch_fixed",
+      "id": "http_fetch_strict",
       "name": "Fetch StwDo page",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
@@ -45,10 +45,10 @@
     },
     {
       "parameters": {
-        "jsCode": "const html = $json.body || '';\n\n// 1) Detect \"no offers\" message\nconst hasNoOffers = /Keine\\s+Angebote/i.test(html);\n\n// 2) Extract candidate offer/exposé links\nconst hrefRegex = /href\\s*=\\s*\"([^\"]+)\"/gi;\nconst found = new Set();\nlet m;\n\nwhile ((m = hrefRegex.exec(html)) !== null) {\n  let href = m[1];\n  if (href.startsWith('/')) href = 'https://www.stwdo.de' + href;\n\n  if (\n    href.includes('stwdo.de') &&\n    /expos|angebot/i.test(href) &&\n    !/aktuelle-wohnangebote/i.test(href)\n  ) {\n    found.add(href);\n  }\n}\n\nconst offers = Array.from(found).sort();\n\n// 3) Static memory (Code node v2)\nconst data = $getWorkflowStaticData('global');\n\ndata.prevOffers = Array.isArray(data.prevOffers) ? data.prevOffers : [];\nconst prevOffers = data.prevOffers;\n\nconst newOffers = offers.filter((u) => !prevOffers.includes(u));\n\nlet message = '';\n\n// If the page does NOT say \"Keine Angebote\"\nif (!hasNoOffers) {\n  if (offers.length > 0) {\n    // Notify when new offers appear (or first run)\n    if (newOffers.length > 0 || prevOffers.length === 0) {\n      message =\n        `🏠 *StwDo dorm offers detected!*\\n\\n` +\n        `New offers (${newOffers.length}):\\n- ${newOffers.join('\\n- ')}\\n\\n` +\n        `All extracted offers (${offers.length}):\\n- ${offers.join('\\n- ')}\\n\\n` +\n        `Main page: https://www.stwdo.de/wohnen/aktuelle-wohnangebote`;\n    }\n\n    // Always update stored offers when we successfully extracted them\n    data.prevOffers = offers;\n    data.prevFlagOffersLikely = false;\n  } else {\n    // Page changed (no \"Keine Angebote\"), but no links extracted\n    // Notify once per state-change\n    if (!data.prevFlagOffersLikely) {\n      message =\n        `🏠 *StwDo page no longer says “Keine Angebote”*\\n\\n` +\n        `I couldn't extract offer links (markup may have changed), but it looks like offers may be available.\\n\\n` +\n        `Check: https://www.stwdo.de/wohnen/aktuelle-wohnangebote`;\n    }\n    data.prevFlagOffersLikely = true;\n  }\n} else {\n  // No offers currently\n  data.prevFlagOffersLikely = false;\n}\n\nconst notify = message.trim().length > 0;\n\nreturn [{ json: { notify, message, hasNoOffers, offersCount: offers.length, newOffersCount: newOffers.length, offers, newOffers } }];\n"
+        "jsCode": "const html = $json.body || '';\nconst htmlLower = html.toLowerCase();\n\n// Very strict \"NO OFFERS\" detection based on the real page text\n// Current page includes \"Keine Angebote\" and \"leider haben wir aktuell keine freien Plätze\".\nconst noOffersByText =\n  htmlLower.includes('keine angebote') ||\n  htmlLower.includes('leider haben wir aktuell keine freien plätze') ||\n  htmlLower.includes('schade - leider haben wir aktuell keine freien plätze');\n\n// Extract ONLY real offer detail links (strict allow-list)\n// Must be under /wohnen/aktuelle-wohnangebote/...\nconst hrefRegex = /href\\s*=\\s*\"([^\"]+)\"/gi;\nconst found = new Set();\nlet m;\n\nwhile ((m = hrefRegex.exec(html)) !== null) {\n  let href = m[1];\n  if (href.startsWith('/')) href = 'https://www.stwdo.de' + href;\n\n  const isOfferDetail =\n    href.startsWith('https://www.stwdo.de/wohnen/aktuelle-wohnangebote/') &&\n    href !== 'https://www.stwdo.de/wohnen/aktuelle-wohnangebote/' &&\n    href !== 'https://www.stwdo.de/wohnen/aktuelle-wohnangebote';\n\n  if (isOfferDetail) found.add(href);\n}\n\nconst offers = Array.from(found).sort();\n\n// Static memory (Code node v2)\nconst data = $getWorkflowStaticData('global');\nif (!Array.isArray(data.prevOffers)) data.prevOffers = [];\nconst prevOffers = data.prevOffers;\n\n// If page says NO offers, reset memory and DO NOT notify.\nif (noOffersByText) {\n  data.prevOffers = [];\n  return [{\n    json: {\n      notify: false,\n      message: '',\n      noOffersByText,\n      offersCount: offers.length,\n      offers,\n      newOffers: []\n    }\n  }];\n}\n\n// If page does NOT say NO offers, only notify when we actually found offer detail links.\nconst newOffers = offers.filter(u => !prevOffers.includes(u));\n\nlet message = '';\nif (offers.length > 0 && (newOffers.length > 0 || prevOffers.length === 0)) {\n  message =\n    `🏠 *StwDo dorm offers detected!*\\n\\n` +\n    `New offers (${newOffers.length}):\\n- ${newOffers.join('\\n- ')}\\n\\n` +\n    `All extracted offers (${offers.length}):\\n- ${offers.join('\\n- ')}\\n\\n` +\n    `Main page: https://www.stwdo.de/wohnen/aktuelle-wohnangebote`;\n}\n\n// Update stored offers when we extracted something\nif (offers.length > 0) data.prevOffers = offers;\n\nconst notify = message.trim().length > 0;\n\nreturn [{\n  json: {\n    notify,\n    message,\n    noOffersByText,\n    offersCount: offers.length,\n    newOffersCount: newOffers.length,\n    offers,\n    newOffers\n  }\n}];\n"
       },
-      "id": "code_detect_fixed",
-      "name": "Detect new offers",
+      "id": "code_detect_strict",
+      "name": "Detect new offers (STRICT)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [740, 260]
@@ -70,7 +70,7 @@
           ]
         }
       },
-      "id": "if_notify_fixed",
+      "id": "if_notify_strict",
       "name": "IF notify? (safe)",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -80,7 +80,7 @@
       "parameters": {
         "mode": "passThrough"
       },
-      "id": "fanout_fixed",
+      "id": "fanout_strict",
       "name": "Fan-out",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
@@ -90,12 +90,12 @@
       "parameters": {
         "operation": "sendMessage",
         "chatId": "CHAT_ID_1_HERE",
-        "text": "={{$json.message || \"🏠 StwDo update: Something changed. Please check: https://www.stwdo.de/wohnen/aktuelle-wohnangebote\"}}",
+        "text": "={{$json.message}}",
         "additionalFields": {
           "parse_mode": "Markdown"
         }
       },
-      "id": "tg1_fixed",
+      "id": "tg1_strict",
       "name": "Telegram 1 Notify",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1,
@@ -110,12 +110,12 @@
       "parameters": {
         "operation": "sendMessage",
         "chatId": "CHAT_ID_2_HERE",
-        "text": "={{$json.message || \"🏠 StwDo update: Something changed. Please check: https://www.stwdo.de/wohnen/aktuelle-wohnangebote\"}}",
+        "text": "={{$json.message}}",
         "additionalFields": {
           "parse_mode": "Markdown"
         }
       },
-      "id": "tg2_fixed",
+      "id": "tg2_strict",
       "name": "Telegram 2 Notify",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1,
@@ -143,14 +143,14 @@
       "main": [
         [
           {
-            "node": "Detect new offers",
+            "node": "Detect new offers (STRICT)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Detect new offers": {
+    "Detect new offers (STRICT)": {
       "main": [
         [
           {
