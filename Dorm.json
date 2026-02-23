@@ -1,18 +1,23 @@
 {
-  "name": "Dorm",
+  "name": "Dorm Monitor Random Loop",
   "nodes": [
     {
+      "parameters": {},
+      "id": "start",
+      "name": "Manual Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-1200, 0]
+    },
+    {
       "parameters": {
-        "jsCode": "const now = new Date();\nconst day = now.getDay(); \nconst hour = now.getHours();\n\nlet isOpen = false;\n\n// Monday 10:00 to Tuesday 12:00\nif ((day === 1 && hour >= 10) || (day === 2 && hour < 12)) {\n    isOpen = true;\n}\n\n// Wednesday 10:00 to Thursday 12:00\nif ((day === 3 && hour >= 10) || (day === 4 && hour < 12)) {\n    isOpen = true;\n}\n\n// Generate a random delay between 0 and 240 seconds (4 minutes)\nconst randomDelay = Math.floor(Math.random() * 241);\n\nreturn [{ json: { isOpen, randomDelay } }];"
+        "jsCode": "function berlinNowParts(date = new Date()) {\n  const parts = new Intl.DateTimeFormat('en-GB', {\n    timeZone: 'Europe/Berlin',\n    weekday: 'short',\n    hour: '2-digit',\n    minute: '2-digit',\n    hour12: false,\n  }).formatToParts(date);\n\n  const obj = {};\n  for (const p of parts) obj[p.type] = p.value;\n\n  const weekdayMap = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 0 };\n\n  return {\n    day: weekdayMap[obj.weekday],\n    hour: parseInt(obj.hour, 10),\n    minute: parseInt(obj.minute, 10),\n  };\n}\n\nconst { day, hour, minute } = berlinNowParts(new Date());\n\nlet isOpen = false;\n\nif ((day === 1 && hour >= 10) || (day === 2 && hour < 12)) isOpen = true;\nif ((day === 3 && hour >= 10) || (day === 4 && hour < 12)) isOpen = true;\n\nreturn [{ json: { isOpen } }];"
       },
-      "id": "b69d5691-6eb8-4774-8cd1-e29c94c4a95c",
-      "name": "Check STWDO Window",
+      "id": "window",
+      "name": "Check Window (Berlin)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        -2576,
-        -432
-      ]
+      "position": [-1000, 0]
     },
     {
       "parameters": {
@@ -25,43 +30,60 @@
           ]
         }
       },
-      "id": "26f22156-2823-4ebf-bb13-630f0c5f1e73",
-      "name": "Is Window Open?",
+      "id": "ifWindow",
+      "name": "Window Open?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [
-        -2352,
-        -432
-      ]
-    },
-    {
-      "parameters": {
-        "amount": "={{$json.randomDelay}}",
-        "unit": "seconds"
-      },
-      "id": "7d80a40c-7c40-4b98-8f31-0d56a0b7db5c",
-      "name": "Random Delay",
-      "type": "n8n-nodes-base.wait",
-      "typeVersion": 1,
-      "position": [
-        -2208,
-        -432
-      ]
+      "position": [-800, 0]
     },
     {
       "parameters": {
         "method": "GET",
-        "url": "https://www.stwdo.de/wohnen/aktuelle-wohnangebote",
-        "options": {}
+        "url": "https://www.stwdo.de/wohnen/aktuelle-wohnangebote"
       },
-      "id": "afabc5c2-3c47-4cf7-b56a-2bf8c1d7d24f",
+      "id": "http",
       "name": "Fetch Listings",
       "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        -2128,
-        -464
-      ]
+      "typeVersion": 4,
+      "position": [-600, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = JSON.stringify($json);\nconst lower = body.toLowerCase();\n\nconst blocked = lower.includes('captcha') || lower.includes('cloudflare') || lower.includes('access denied');\n\nreturn [{ json: { blocked, html: $json.data || $json.body || '' } }];"
+      },
+      "id": "checkBlock",
+      "name": "Check Blocked",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-400, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.blocked}}",
+              "operation": "isTrue"
+            }
+          ]
+        }
+      },
+      "id": "ifBlocked",
+      "name": "Blocked?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [-200, 0]
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_CHAT_ID",
+        "text": "⚠️ Dorm Monitor Blocked / Captcha Detected"
+      },
+      "id": "alertBlocked",
+      "name": "Telegram Block Alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [0, -100]
     },
     {
       "parameters": {
@@ -74,211 +96,106 @@
               "returnValue": "html"
             },
             {
-              "key": "price",
-              "cssSelector": ".residential-offer__price",
-              "returnValue": "html"
-            },
-            {
               "key": "link",
               "cssSelector": ".residential-offer__link a",
               "returnValue": "attribute",
               "attribute": "href"
             }
           ]
-        },
-        "options": {}
-      },
-      "id": "3ffa9111-f2c2-4413-b921-8f71f2d69589",
-      "name": "Extract Rooms",
-      "type": "n8n-nodes-base.html",
-      "typeVersion": 1.2,
-      "position": [
-        -1904,
-        -464
-      ]
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "string": [
-            {
-              "value1": "={{$json.link}}",
-              "operation": "notEmpty"
-            }
-          ]
         }
       },
-      "id": "b9c3cd22-8c34-4a1f-9b14-245a7c4d7bf4",
-      "name": "Room Found?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2,
-      "position": [
-        -1680,
-        -464
-      ]
+      "id": "extract",
+      "name": "Extract Rooms",
+      "type": "n8n-nodes-base.html",
+      "typeVersion": 1,
+      "position": [0, 100]
     },
     {
       "parameters": {
-        "jsCode": "// Persistent dedup across runs using n8n static data\nconst data = this.getWorkflowStaticData('global');\nif (!data.seen) data.seen = [];\n\n// Optional: keep only last 500 entries to prevent unbounded growth\nconst MAX = 500;\n\nconst out = [];\nfor (const item of items) {\n  const link = item.json.link;\n  if (!link) continue;\n\n  const key = String(link).trim();\n  if (!data.seen.includes(key)) {\n    data.seen.push(key);\n    if (data.seen.length > MAX) {\n      data.seen = data.seen.slice(data.seen.length - MAX);\n    }\n    out.push(item);\n  }\n}\n\nreturn out;"
+        "jsCode": "const data = this.getWorkflowStaticData('global');\nif (!data.seen) data.seen = [];\n\nconst out = [];\nfor (const item of items) {\n  const link = item.json.link;\n  if (!link) continue;\n  if (!data.seen.includes(link)) {\n    data.seen.push(link);\n    out.push(item);\n  }\n}\nreturn out;"
       },
-      "id": "6f7090af-0899-437a-adbf-6aee755e8fcd",
+      "id": "dedup",
       "name": "Only New Rooms",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        -1456,
-        -464
-      ]
+      "position": [200, 100]
     },
     {
       "parameters": {
         "chatId": "YOUR_CHAT_ID",
-        "text": "🚨 New Dorm Offer Found!\n\nTitle: {{$json.title}}\nPrice: {{$json.price}}\nLink: {{$json.link}}",
-        "additionalFields": {}
+        "text": "🚨 New Dorm Offer!\n\n{{$json.title}}\n{{$json.link}}"
       },
-      "id": "ea2a9ea1-9c33-4c2f-9f4e-6a1d4b9b4f0a",
+      "id": "alert",
       "name": "Telegram Alert",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1,
-      "position": [
-        -1232,
-        -544
-      ]
+      "position": [400, 100]
     },
     {
       "parameters": {
-        "chatId": "YOUR_CHAT_ID",
-        "text": "🔔 Dorm Listing Detected (Backup Alert)\n\n{{$json.title}}\n{{$json.link}}",
-        "additionalFields": {}
+        "jsCode": "const randomSeconds = Math.floor(Math.random() * (300 - 60 + 1)) + 60;\nreturn [{ json: { randomSeconds } }];"
       },
-      "id": "b9ecb30d-0ce8-40a7-8b3f-9d9d8d4a3f33",
-      "name": "Telegram Alert2",
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1,
-      "position": [
-        -1232,
-        -384
-      ]
+      "id": "random",
+      "name": "Random 1-5 Min",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [600, 0]
     },
     {
       "parameters": {
-        "rule": {
-          "interval": [
-            {
-              "field": "minutes",
-              "minutesInterval": 1
-            }
-          ]
-        }
+        "amount": "={{$json.randomSeconds}}",
+        "unit": "seconds"
       },
-      "id": "5f74a0a3-bbb5-4c6c-a7f6-2d5e6b35a0d1",
-      "name": "Scheduler",
-      "type": "n8n-nodes-base.scheduleTrigger",
+      "id": "wait",
+      "name": "Wait",
+      "type": "n8n-nodes-base.wait",
       "typeVersion": 1,
-      "position": [
-        -2800,
-        -432
-      ]
+      "position": [800, 0]
     }
   ],
-  "pinData": {},
   "connections": {
-    "Check STWDO Window": {
-      "main": [
-        [
-          {
-            "node": "Is Window Open?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+    "Manual Start": {
+      "main": [[{ "node": "Check Window (Berlin)", "type": "main", "index": 0 }]]
     },
-    "Is Window Open?": {
-      "main": [
-        [
-          {
-            "node": "Random Delay",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        []
-      ]
+    "Check Window (Berlin)": {
+      "main": [[{ "node": "Window Open?", "type": "main", "index": 0 }]]
     },
-    "Random Delay": {
+    "Window Open?": {
       "main": [
-        [
-          {
-            "node": "Fetch Listings",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Fetch Listings", "type": "main", "index": 0 }],
+        [{ "node": "Random 1-5 Min", "type": "main", "index": 0 }]
       ]
     },
     "Fetch Listings": {
+      "main": [[{ "node": "Check Blocked", "type": "main", "index": 0 }]]
+    },
+    "Check Blocked": {
+      "main": [[{ "node": "Blocked?", "type": "main", "index": 0 }]]
+    },
+    "Blocked?": {
       "main": [
-        [
-          {
-            "node": "Extract Rooms",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Extract Rooms", "type": "main", "index": 0 }],
+        [{ "node": "Telegram Block Alert", "type": "main", "index": 0 }]
       ]
     },
     "Extract Rooms": {
-      "main": [
-        [
-          {
-            "node": "Room Found?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Room Found?": {
-      "main": [
-        [
-          {
-            "node": "Only New Rooms",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        []
-      ]
+      "main": [[{ "node": "Only New Rooms", "type": "main", "index": 0 }]]
     },
     "Only New Rooms": {
-      "main": [
-        [
-          {
-            "node": "Telegram Alert",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Telegram Alert2",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{ "node": "Telegram Alert", "type": "main", "index": 0 }]]
     },
-    "Scheduler": {
-      "main": [
-        [
-          {
-            "node": "Check STWDO Window",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+    "Telegram Alert": {
+      "main": [[{ "node": "Random 1-5 Min", "type": "main", "index": 0 }]]
+    },
+    "Telegram Block Alert": {
+      "main": [[{ "node": "Random 1-5 Min", "type": "main", "index": 0 }]]
+    },
+    "Random 1-5 Min": {
+      "main": [[{ "node": "Wait", "type": "main", "index": 0 }]]
+    },
+    "Wait": {
+      "main": [[{ "node": "Check Window (Berlin)", "type": "main", "index": 0 }]]
     }
   },
-  "active": false,
-  "settings": {}
+  "active": false
 }
